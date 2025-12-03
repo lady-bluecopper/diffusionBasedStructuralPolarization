@@ -6,6 +6,7 @@ import heapq
 import networkx as nx
 import networkx.algorithms.community as nx_comm
 import numpy as np
+import pandas as pd
 from operator import itemgetter
 import scipy.stats
 import time
@@ -230,6 +231,122 @@ def dipole_pol(G, partition, k=0.05):
     mblb_score = (1 - delta_A) * pole_D
     
     return mblb_score
+
+
+def assortativity_score(G, partition):
+    node_colors = dict()
+    for idx in [0, 1]:
+        for node in partition[idx]:
+            node_colors[node] = idx
+    nx.set_node_attributes(G, values=node_colors, name='color')
+    return nx.attribute_assortativity_coefficient(G, "color")
+
+
+W = {
+    'r':{'r':-1, 'l':1},
+    'l':{'r':1,'l':-1}
+}
+
+
+def node_data(G, node_labels, LABELS):
+    LABELS.sort()
+    columns = ['node', 'label', 'total']
+    for lbl in LABELS:
+        columns.append(lbl)
+
+    all_data = []
+    for node in G.nodes():
+        cluster_node_count = dict.fromkeys(LABELS, 0)
+        total = 0
+        for neighbhor in G.neighbors(node):
+            total += 1
+            neigh_lbl = node_labels[neighbhor]
+            cluster_node_count[neigh_lbl] += 1
+       
+        label = node_labels[node]
+        data = [node, label, total]
+        keys = list(cluster_node_count.keys())
+        keys.sort()
+        for key in keys:
+            data.append(cluster_node_count[key])
+        all_data.append(data)
+   
+    info = pd.DataFrame(all_data, columns=columns)
+    info.set_index('node', inplace=True)
+    return info
+
+
+def neighbor_contribution(node_label, neighbor, info, LABELS):
+    wc_i = W[node_label]
+   
+    nc = 0
+    total = info.loc[neighbor, 'total']
+    for lbl in LABELS:
+        count = info.loc[neighbor, lbl]
+        count = count - 1 if lbl == node_label else count
+        nc += ((1 / 2) * wc_i[lbl] * count / (total - 1)) if total > 1 else 0
+    return nc
+
+
+def avg_neighbor_contribution(graph, node, node_label, info, cluster_label, LABELS):
+    nc_total = 0
+    total = 0
+   
+    for neighbor in graph.neighbors(node):
+        neigh_label = info.loc[neighbor, 'label']
+        if neigh_label != cluster_label:
+            continue
+       
+        nc_total += neighbor_contribution(node_label, neighbor, info, LABELS)
+        total += 1
+   
+    return  nc_total / total if total > 0 else 0
+
+
+def ideology_factor(node, node_label, info, cluster_label):
+    wc_i = W[node_label]
+    count = info.loc[node, cluster_label]
+    total = info.loc[node, 'total']
+    id_factor = wc_i[cluster_label] * count / total    
+    return id_factor
+
+
+def CCA(G, partition):
+
+    node_labels = dict()
+    str_labels = ['l', 'r']
+    for idx in [0, 1]:
+        for node in partition[idx]:
+            node_labels[node] = str_labels[idx]
+
+    LABELS = list(set(node_labels.values()))
+    node_info = node_data(G, node_labels, LABELS)
+
+    data = []
+    for node in G.nodes():
+        II = 0
+        NC = 0
+        non_zero_cluster_count = 0
+        node_label = node_info.loc[node, 'label']
+        details = node_info.loc[node].copy()
+        for lbl in LABELS:
+            nc = avg_neighbor_contribution(G, node, node_label, node_info, lbl, LABELS)
+            if nc != 0:
+                NC += nc
+                non_zero_cluster_count += 1
+            II += ideology_factor(node, node_label, node_info, lbl)
+       
+        H =  (NC / non_zero_cluster_count if non_zero_cluster_count > 0 else 0) + II
+        details['H'] = H
+        data.append(details)
+
+    # affinity values
+    H_df = pd.concat(data)
+    # cross-community affinity polarization score
+    total_nodes = G.number_of_nodes()
+    sum_of_border_nodes = sum(H_df['H'])
+    cluster_affinity = sum_of_border_nodes / total_nodes
+    return - cluster_affinity
     
 
 def rwc_score(g, 
@@ -613,8 +730,8 @@ def compute_pol_measures(G: nx.Graph,
     if empty_part:
         for score in rwc_lst:
             infopack[f'DSP{score}__{alpha}'] = [None, None]
-        for meas in ['RWC', 'ARWC', 'ARWC No-Infl', 
-                     'Q', 'EI', 'AEI', 'BCC', 'BP', 'DM']:
+        for meas in ['RWC', 'ARWC', 'ARWC No-Infl', 'CCA',
+                     'Q', 'EI', 'AEI', 'BCC', 'BP', 'DM', 'ASS']:
             infopack[meas] = [None, None]
         return infopack
     args = dict()
@@ -710,6 +827,20 @@ def compute_pol_measures(G: nx.Graph,
         print("DM completed.")
     infopack['DM'] = [mblb, mblb_t]
     
+    st = time.time()
+    ass = assortativity_score(G, partition)
+    ass_t = time.time() - st
+    if verbose:
+        print("Assortativity completed.")
+    infopack['ASS'] = [ass, ass_t]
+    
+    st = time.time()
+    cca = CCA(G, partition)
+    cca_t = time.time() - st
+    if verbose:
+        print("CCA completed.")
+    infopack['CCA'] = [cca, cca_t]
+    
     for score in rwc_lst:
         st = time.time()
         rwc_plus = get_rwc_score(score, args)
@@ -717,5 +848,5 @@ def compute_pol_measures(G: nx.Graph,
         infopack[f'DSP{score}__{alpha}'] = [rwc_plus, rwc_plus_t]
         if verbose:
             print('DSP completed.')
-
+    
     return infopack

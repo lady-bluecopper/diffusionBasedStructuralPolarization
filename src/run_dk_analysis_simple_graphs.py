@@ -100,7 +100,6 @@ if __name__ == '__main__':
         }
         outputs = dk.parallel_null_model([b_g, pp, k, rwc_lst, args])
         all_dfs.extend(ut.process_output_pol_measures(outputs))
-            
         for null_m in null_models:
             outs = dk.get_output_nm(null_m, 
                                     b_g, 

@@ -37,7 +37,7 @@ def read_edges(file_path: str, # path to input graph
                 counter += 1
             try:
                 w = int(lst[2].strip())
-            except:
+            except Exception as e:
                 w = 1
             if u != v:
                 for _ in range(w):
@@ -109,7 +109,7 @@ def read_weighted_edges(file_path: str,
                 counter += 1
             try:
                 w = int(lst[2].strip())
-            except:
+            except Exception as e:
                 w = 1
             if u != v:
                 if directed or vmap[u] < vmap[v]:
